@@ -2,6 +2,8 @@ import datetime
 import random
 import torch
 import numpy as np
+import csv
+from pathlib import Path
 from model import *
 from parameters import *
 from data import *
@@ -174,3 +176,36 @@ for epoch in range(1, config["max_epochs"] + 1):
         break
 
     scheduler.step(val_loss)
+
+t0 = time.time()
+
+test_files = list(Path("/kaggle/input/open-wfi-test/test").glob("*.npy"))
+x_cols = [f"x_{i}" for i in range(1, 70, 2)]
+fieldnames = ["oid_ypos"] + x_cols
+ds = TestDataset(test_files)
+dl = DataLoader(ds, batch_size=4*config["batch_size"], num_workers=4, pin_memory=False)
+
+model.load_state_dict(torch.load("best_model.pth", weights_only=True))
+
+model.eval()
+with open("submission.csv", "wt", newline="") as csvfile:
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+
+    for inputs, oids_test in dl:
+        inputs = inputs.to(device)
+        with torch.inference_mode():
+            with torch.autocast(device_type="cuda"):
+                outputs = model(inputs)
+
+        y_preds = outputs[:, 0].cpu().numpy()
+
+        for y_pred, oid_test in zip(y_preds, oids_test):
+            for y_pos in range(70):
+                row = dict(zip(x_cols, [y_pred[y_pos, x_pos] for x_pos in range(1, 70, 2)]))
+                row["oid_ypos"] = f"{oid_test}_y_{y_pos}"
+
+                writer.writerow(row)
+
+t1 = format_time(time.time() - t0)
+print(f"Inference Time: {t1}")
